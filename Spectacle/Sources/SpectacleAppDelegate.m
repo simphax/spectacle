@@ -120,11 +120,95 @@
   [[SUUpdater sharedUpdater] setAutomaticallyChecksForUpdates:automaticallyChecksForUpdates];
 
   [self updateShortcutMenuItems];
+    
+    CFMachPortRef eventTap = CGEventTapCreate(kCGSessionEventTap, kCGHeadInsertEventTap, kCGEventTapOptionDefault, kCGEventMaskForAllEvents, eventTapCallback, (__bridge void * _Nullable)(self));
+    CFRunLoopAddSource(CFRunLoopGetCurrent(), CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0), kCFRunLoopCommonModes);
+    CGEventTapEnable(eventTap, true);
 
   if (!AXIsProcessTrustedWithOptions(NULL)) {
     [[NSApplication sharedApplication] runModalForWindow:self.accessiblityAccessDialogWindow];
   }
+    
 }
+
+BOOL handledSwipeLeft = false;
+BOOL handledSwipeRight = false;
+
+-(NSEvent*) handleScrollEvent:(NSEvent*)event {
+    NSLog(@"eventTapCallback: %f", event.deltaX);
+    
+    if(event.deltaX > -3) {
+        handledSwipeLeft = false;
+    }
+    if(event.deltaX < 3) {
+        handledSwipeRight = false;
+    }
+    
+    NSEventModifierFlags flags = event.modifierFlags;
+    if( (flags & NSAlternateKeyMask) && (flags & NSAlternateKeyMask) && (flags & NSAlternateKeyMask)) {
+        
+        /*
+         EventHotKeyID shortcutID;
+         OSStatus err = GetEventParameter([event eventRef],
+         kEventParamDirectObject,
+         typeEventHotKeyID,
+         NULL,
+         sizeof(EventHotKeyID),
+         NULL,
+         &shortcutID);
+         
+         shortcutID.id = 32;
+         
+         
+         
+         NSLog(@"233333333 shorcutID: %i",shortcutID.id);
+         
+         SpectacleShortcut *shortcut = [(__bridge SpectacleShortcutManager *)shortcutManager registeredShortcutForShortcutID:shortcutID];
+         
+         [shortcut triggerShortcutAction];
+         */
+        /*
+         [shortcut setShortcutAction:^(SpectacleShortcut *shortcut) {
+         SpectacleWindowAction windowAction = [_windowPositionManager windowActionForShortcut:shortcut];
+         
+         [_windowPositionManager moveFrontmostWindowElement:[SpectacleAccessibilityElement frontmostWindowElement]
+         action:windowAction];
+         }];
+         */
+        if(!handledSwipeLeft && event.deltaX < -4) {
+            [_windowPositionManager moveFrontmostWindowElement:[SpectacleAccessibilityElement frontmostWindowElement]
+                                                        action:SpectacleWindowActionLeftHalf];
+            handledSwipeLeft = true;
+            
+        }
+        if(!handledSwipeRight && event.deltaX > 4) {
+            [_windowPositionManager moveFrontmostWindowElement:[SpectacleAccessibilityElement frontmostWindowElement]
+                                                        action:SpectacleWindowActionRightHalf];
+            handledSwipeRight = true;
+        }
+        return NULL;
+    } else {
+        return event;
+    }
+    
+    // return the CGEventRef
+
+}
+
+//NSEventMask eventMask = NSEventMaskGesture|NSEventMaskMagnify|NSEventMaskSwipe|NSEventMaskRotate|NSEventMaskBeginGesture|NSEventMaskEndGesture;
+NSEventMask eventMask = NSScrollWheelMask;
+
+CGEventRef eventTapCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef eventRef, void *appDelegate) {
+    
+    NSEvent *event = [NSEvent eventWithCGEvent:eventRef];
+    if (!(eventMask & NSEventMaskFromType([event type]))) { return [event CGEvent]; }
+    
+    return [[(__bridge SpectacleAppDelegate *)appDelegate handleScrollEvent:event] CGEvent];
+    
+}
+
+
+
 
 #pragma mark -
 
