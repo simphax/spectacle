@@ -68,17 +68,94 @@
                            screens:(NSArray *)screens
                         mainScreen:(NSScreen *)mainScreen
 {
-  NSScreen *screenOfDisplay = [_screenDetector screenWithAction:action
-                                         frontmostWindowElement:frontmostWindowElement
+    NSScreen *screenOfDisplay = [_screenDetector screenWithAction:action
+                                           frontmostWindowElement:frontmostWindowElement
+                                                          screens:screens
+                                                       mainScreen:mainScreen];
+    
+    CGRect frameOfScreen = CGRectNull;
+    CGRect visibleFrameOfScreen = CGRectNull;
+    SpectacleHistory *history = [self historyForCurrentApplication];
+    SpectacleHistoryItem *historyItem = nil;
+    SpectacleCalculationResult *calculationResult = nil;
+    
+    if (screenOfDisplay) {
+        frameOfScreen = NSRectToCGRect([screenOfDisplay frame]);
+        visibleFrameOfScreen = NSRectToCGRect([screenOfDisplay visibleFrame]);
+    }
+    
+    CGRect frontmostWindowRect = [frontmostWindowElement rectOfElementWithFrameOfScreen:frameOfScreen];
+    CGRect previousFrontmostWindowRect = CGRectNull;
+    
+    if ([frontmostWindowElement isSheet]
+        || [frontmostWindowElement isSystemDialog]
+        || CGRectIsNull(frontmostWindowRect)
+        || CGRectIsNull(frameOfScreen)
+        || CGRectIsNull(visibleFrameOfScreen)) {
+        _failureFeedback();
+        
+        return;
+    }
+    
+    if ([history isEmpty]) {
+        historyItem = [SpectacleHistoryItem historyItemFromAccessibilityElement:frontmostWindowElement
+                                                                     windowRect:frontmostWindowRect];
+        
+        [history addHistoryItem:historyItem];
+    }
+    
+    if (MovingToNextOrPreviousDisplay(action) && RectFitsInRect(frontmostWindowRect, visibleFrameOfScreen)) {
+        action = SpectacleWindowActionCenter;
+    }
+    
+    previousFrontmostWindowRect = frontmostWindowRect;
+    
+    if (Resizing(action)) {
+        CGFloat sizeOffset = ((action == SpectacleWindowActionLarger) ? 1.0 : -1.0) * kWindowSizeOffset;
+        
+        calculationResult = [_windowPositionCalculator calculateResizedWindowRect:frontmostWindowRect
+                                                             visibleFrameOfScreen:visibleFrameOfScreen
+                                                                       sizeOffset:sizeOffset
+                                                                           action:action];
+    } else {
+        calculationResult = [_windowPositionCalculator calculateWindowRect:frontmostWindowRect
+                                                      visibleFrameOfScreen:visibleFrameOfScreen
+                                                                    action:action];
+    }
+    
+    action = calculationResult.action;
+    frontmostWindowRect = calculationResult.windowRect;
+    
+    if (CGRectEqualToRect(previousFrontmostWindowRect, frontmostWindowRect)) {
+        _failureFeedback();
+        
+        return;
+    }
+    
+    historyItem = [SpectacleHistoryItem historyItemFromAccessibilityElement:frontmostWindowElement
+                                                                 windowRect:frontmostWindowRect];
+    
+    [history addHistoryItem:historyItem];
+    
+    [_windowMover moveWindowRect:frontmostWindowRect
+                   frameOfScreen:frameOfScreen
+            visibleFrameOfScreen:visibleFrameOfScreen
+          frontmostWindowElement:frontmostWindowElement
+                          action:action];
+}
+
+- (void)moveFrontmostWindowElement:(SpectacleAccessibilityElement *)frontmostWindowElement
+                            offset:(CGPoint)offset
+                           screens:(NSArray *)screens
+                        mainScreen:(NSScreen *)mainScreen
+{
+  NSScreen *screenOfDisplay = [_screenDetector screenContainingFrontmostWindowElement:frontmostWindowElement
                                                         screens:screens
                                                      mainScreen:mainScreen];
 
   CGRect frameOfScreen = CGRectNull;
   CGRect visibleFrameOfScreen = CGRectNull;
-  SpectacleHistory *history = [self historyForCurrentApplication];
-  SpectacleHistoryItem *historyItem = nil;
-  SpectacleCalculationResult *calculationResult = nil;
-
+    
   if (screenOfDisplay) {
     frameOfScreen = NSRectToCGRect([screenOfDisplay frame]);
     visibleFrameOfScreen = NSRectToCGRect([screenOfDisplay visibleFrame]);
@@ -97,51 +174,38 @@
     return;
   }
 
-  if ([history isEmpty]) {
-    historyItem = [SpectacleHistoryItem historyItemFromAccessibilityElement:frontmostWindowElement
-                                                                 windowRect:frontmostWindowRect];
-
-    [history addHistoryItem:historyItem];
-  }
-
-  if (MovingToNextOrPreviousDisplay(action) && RectFitsInRect(frontmostWindowRect, visibleFrameOfScreen)) {
-    action = SpectacleWindowActionCenter;
-  }
-
   previousFrontmostWindowRect = frontmostWindowRect;
-
-  if (Resizing(action)) {
-    CGFloat sizeOffset = ((action == SpectacleWindowActionLarger) ? 1.0 : -1.0) * kWindowSizeOffset;
-
-    calculationResult = [_windowPositionCalculator calculateResizedWindowRect:frontmostWindowRect
-                                                         visibleFrameOfScreen:visibleFrameOfScreen
-                                                                   sizeOffset:sizeOffset
-                                                                       action:action];
-  } else {
-    calculationResult = [_windowPositionCalculator calculateWindowRect:frontmostWindowRect
-                                                  visibleFrameOfScreen:visibleFrameOfScreen
-                                                                action:action];
-  }
-
-  action = calculationResult.action;
-  frontmostWindowRect = calculationResult.windowRect;
-
-  if (CGRectEqualToRect(previousFrontmostWindowRect, frontmostWindowRect)) {
-    _failureFeedback();
-
-    return;
-  }
-
-  historyItem = [SpectacleHistoryItem historyItemFromAccessibilityElement:frontmostWindowElement
-                                                               windowRect:frontmostWindowRect];
-
-  [history addHistoryItem:historyItem];
-
+    
+    frontmostWindowRect.origin.x += offset.x;
+    //frontmostWindowRect.origin.y += offset.y;
+    
+    if(frontmostWindowRect.origin.x < 0) {
+        frontmostWindowRect.size.width -= fabs(offset.x);
+        frontmostWindowRect.origin.x = 0;
+    }
+    
+    if(frontmostWindowRect.origin.x + frontmostWindowRect.size.width > frameOfScreen.origin.x + frameOfScreen.size.width) {
+        frontmostWindowRect.size.width -= fabs(offset.x);
+        frontmostWindowRect.origin.x = frameOfScreen.origin.x + frameOfScreen.size.width - frontmostWindowRect.size.width;
+    }
+    //frontmostWindowRect.origin.y = frontmostWindowRect.origin.y > 0 ? 0 : frontmostWindowRect.origin.y;
+/*
   [_windowMover moveWindowRect:frontmostWindowRect
                  frameOfScreen:frameOfScreen
           visibleFrameOfScreen:visibleFrameOfScreen
         frontmostWindowElement:frontmostWindowElement
-                        action:action];
+                        action:SpectacleWindowActionNone];
+ */
+    [frontmostWindowElement setRectOfElement:frontmostWindowRect frameOfScreen:frameOfScreen];
+}
+
+- (void)moveFrontmostWindowElement:(SpectacleAccessibilityElement *)frontmostWindowElement
+                            offset:(CGPoint)offset
+{
+    [self moveFrontmostWindowElement:frontmostWindowElement
+                              offset:offset
+                             screens:[NSScreen screens]
+                          mainScreen:[NSScreen mainScreen]];
 }
 
 - (void)moveFrontmostWindowElement:(SpectacleAccessibilityElement *)frontmostWindowElement

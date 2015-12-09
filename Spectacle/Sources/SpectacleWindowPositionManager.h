@@ -31,6 +31,9 @@ typedef void (^SpectacleFailureFeedback)();
 - (void)moveFrontmostWindowElement:(SpectacleAccessibilityElement *)frontmostWindowElement
                             action:(SpectacleWindowAction)action;
 
+- (void)moveFrontmostWindowElement:(SpectacleAccessibilityElement *)frontmostWindowElement
+                            offset:(CGPoint)offset;
+
 #pragma mark -
 
 - (void)undoLastWindowAction;

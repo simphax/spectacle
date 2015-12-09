@@ -24,6 +24,7 @@
   NSSet *_blacklistedApplications;
   NSMutableSet *_disabledApplications;
   BOOL _shortcutsAreDisabledForAnHour;
+  CFMachPortRef _eventTap;
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification *)notification
@@ -121,9 +122,9 @@
 
   [self updateShortcutMenuItems];
     
-    CFMachPortRef eventTap = CGEventTapCreate(kCGSessionEventTap, kCGHeadInsertEventTap, kCGEventTapOptionDefault, kCGEventMaskForAllEvents, eventTapCallback, (__bridge void * _Nullable)(self));
-    CFRunLoopAddSource(CFRunLoopGetCurrent(), CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0), kCFRunLoopCommonModes);
-    CGEventTapEnable(eventTap, true);
+    _eventTap = CGEventTapCreate(kCGSessionEventTap, kCGHeadInsertEventTap, kCGEventTapOptionDefault, CGEventMaskBit(kCGEventScrollWheel), eventTapCallback, (__bridge void * _Nullable)(self));
+    CFRunLoopAddSource(CFRunLoopGetCurrent(), CFMachPortCreateRunLoopSource(kCFAllocatorDefault, _eventTap, 0), kCFRunLoopCommonModes);
+    CGEventTapEnable(_eventTap, true);
 
   if (!AXIsProcessTrustedWithOptions(NULL)) {
     [[NSApplication sharedApplication] runModalForWindow:self.accessiblityAccessDialogWindow];
@@ -134,14 +135,18 @@
 BOOL handledSwipeLeft = false;
 BOOL handledSwipeRight = false;
 
--(NSEvent*) handleScrollEvent:(NSEvent*)event {
-    NSLog(@"eventTapCallback: %f", event.deltaX);
+-(CGEventRef) handleScrollEvent:(NSEvent*)event {
+    //NSLog(@"eventTapCallback: %f", event.deltaX);
     
-    if(event.deltaX > -3) {
-        handledSwipeLeft = false;
-    }
-    if(event.deltaX < 3) {
-        handledSwipeRight = false;
+    if(event.phase != NSEventPhaseEnded) {
+        if(handledSwipeLeft && event.scrollingDeltaX > -1) {
+            NSLog(@"reset swipe left, %f", event.deltaX);
+            handledSwipeLeft = false;
+        }
+        if(handledSwipeRight && event.scrollingDeltaX < 1) {
+            NSLog(@"reset swipe right, %f", event.deltaX);
+            handledSwipeRight = false;
+        }
     }
     
     NSEventModifierFlags flags = event.modifierFlags;
@@ -175,20 +180,27 @@ BOOL handledSwipeRight = false;
          action:windowAction];
          }];
          */
-        if(!handledSwipeLeft && event.deltaX < -4) {
+        if(!handledSwipeLeft && !handledSwipeRight) {
+            [_windowPositionManager moveFrontmostWindowElement:[SpectacleAccessibilityElement frontmostWindowElement]
+                                                    offset:CGPointMake(event.deltaX*8, -event.deltaY*8)];
+        }
+    
+        if(!handledSwipeLeft && event.deltaX < -3) {
+            handledSwipeLeft = true;
             [_windowPositionManager moveFrontmostWindowElement:[SpectacleAccessibilityElement frontmostWindowElement]
                                                         action:SpectacleWindowActionLeftHalf];
-            handledSwipeLeft = true;
+            NSLog(@"swipe left, %f", event.deltaX);
             
         }
-        if(!handledSwipeRight && event.deltaX > 4) {
+        if(!handledSwipeRight && event.deltaX > 3) {
+            handledSwipeRight = true;
             [_windowPositionManager moveFrontmostWindowElement:[SpectacleAccessibilityElement frontmostWindowElement]
                                                         action:SpectacleWindowActionRightHalf];
-            handledSwipeRight = true;
+            NSLog(@"swipe right, %f", event.deltaX);
         }
         return NULL;
     } else {
-        return event;
+        return [event CGEvent];
     }
     
     // return the CGEventRef
@@ -200,11 +212,25 @@ NSEventMask eventMask = NSScrollWheelMask;
 
 CGEventRef eventTapCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef eventRef, void *appDelegate) {
     
-    NSEvent *event = [NSEvent eventWithCGEvent:eventRef];
-    if (!(eventMask & NSEventMaskFromType([event type]))) { return [event CGEvent]; }
+    SpectacleAppDelegate *self = (__bridge SpectacleAppDelegate *)appDelegate;
     
-    return [[(__bridge SpectacleAppDelegate *)appDelegate handleScrollEvent:event] CGEvent];
+    if(type == kCGEventTapDisabledByTimeout || type == kCGEventTapDisabledByUserInput) {
+        CGEventTapEnable(self->_eventTap, true);
+        return eventRef;
+    }
     
+    @try {
+        NSEvent *event = [NSEvent eventWithCGEvent:eventRef];
+        if (!(eventMask & NSEventMaskFromType([event type]))) { return [event CGEvent]; }
+        
+        return [self handleScrollEvent:event];
+    }
+    @catch (NSException *e) {
+        //We catch any exceptions to prevent the event tap from being messed up.
+        NSLog(@"*** ignoring exception: %@", e);
+    }
+    
+    return eventRef;
 }
 
 
